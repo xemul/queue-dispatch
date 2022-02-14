@@ -16,6 +16,13 @@
 #define VERB false
 #endif
 
+#ifndef PROCESS
+#error "Please, define the PROCESS (uniform, poisson, exp_delay)"
+#endif
+
+#define _PROC_CALC(proc) proc##_process
+#define PROC_CLASS(proc) _PROC_CALC(proc)
+
 using namespace std::chrono;
 using namespace boost::accumulators;
 
@@ -234,7 +241,7 @@ int main (int argc, char **argv)
     unsigned long cons_rate = atoi(argv[2]);
     collector st;
     consumer cons(cons_rate, st);
-    dispatcher disp(microseconds(500), cons, [] (auto l) { return std::make_unique<exp_delay_process>(l); });
+    dispatcher disp(microseconds(500), cons, [] (auto l) { return std::make_unique<PROC_CLASS(PROCESS)>(l); });
     producer prod(prod_rate, disp);
     duration<double> _verb(0.0);
     unsigned long max_queued = 0;

@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+poisson
+uniform
+exp_delay
