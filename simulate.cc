@@ -16,6 +16,10 @@
 #define VERB false
 #endif
 
+#ifndef GOAL_FACTOR
+#define GOAL_FACTOR 1.5 // As in seastar
+#endif
+
 #ifndef PROCESS
 #error "Please, define the PROCESS (uniform, poisson, exp_delay)"
 #endif
@@ -155,7 +159,7 @@ public:
 };
 
 class dispatcher {
-    static constexpr double lat_extend = 1.5; // as in seastar
+    static constexpr double lat_extend = GOAL_FACTOR;
     std::unique_ptr<process> _pause;
     duration<double> _next;
     consumer& _cons;
