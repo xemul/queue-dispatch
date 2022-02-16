@@ -10,3 +10,6 @@ poisson: $(SOURCE)
 
 expdelay: $(SOURCE)
 	clang++ -std=c++20 -O2 -lfmt -DPROCESS=exp_delay $< -o $@
+
+capdelay: $(SOURCE)
+	clang++ -std=c++20 -O2 -lfmt -DPROCESS=cap_delay $< -o $@

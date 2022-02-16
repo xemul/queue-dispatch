@@ -20,8 +20,12 @@
 #define GOAL_FACTOR 1.5 // As in seastar
 #endif
 
+#ifndef CAP_FACTOR
+#define CAP_FACTOR (GOAL_FACTOR * 2.0)
+#endif
+
 #ifndef PROCESS
-#error "Please, define the PROCESS (uniform, poisson, exp_delay)"
+#error "Please, define the PROCESS (uniform, poisson, exp_delay, cap_delay)"
 #endif
 
 #define _PROC_CALC(proc) proc##_process
@@ -82,6 +86,24 @@ public:
 
     virtual duration<double> get() override {
         return _lat;
+    }
+};
+
+class cap_delay_process : public process {
+    duration<double> _lat;
+    std::random_device _rd;
+    std::mt19937 _rng;
+    std::uniform_real_distribution<double> _jit;
+
+public:
+    cap_delay_process(duration<double> period)
+            : _lat(period)
+            , _jit(1.0, CAP_FACTOR)
+    {
+    }
+
+    virtual duration<double> get() override {
+        return _lat * _jit(_rng);
     }
 };
 
