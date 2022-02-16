@@ -258,13 +258,14 @@ public:
 
 int main (int argc, char **argv)
 {
-    if (argc != 3) {
-        fmt::print("usage: {} <producer rate> <consumer rate>\n", argv[0]);
+    if (argc != 4) {
+        fmt::print("usage: {} <duration seconds> <producer rate> <consumer rate>\n", argv[0]);
         return 1;
     }
 
-    unsigned long prod_rate = atoi(argv[1]);
-    unsigned long cons_rate = atoi(argv[2]);
+    unsigned long total_sec = atoi(argv[1]);
+    unsigned long prod_rate = atoi(argv[2]);
+    unsigned long cons_rate = atoi(argv[3]);
     collector st;
     consumer cons(cons_rate, st);
     dispatcher disp(microseconds(500), cons, [] (auto l) { return std::make_unique<PROC_CLASS(PROCESS)>(l); });
@@ -273,7 +274,7 @@ int main (int argc, char **argv)
     unsigned long max_queued = 0;
 
     duration<double> now(0.0);
-    while (now <= seconds(300)) {
+    while (now <= seconds(total_sec)) {
         cons.tick(now);
         prod.tick(now);
         disp.tick(now);
