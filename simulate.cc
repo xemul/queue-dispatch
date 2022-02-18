@@ -155,17 +155,19 @@ public:
 };
 
 class consumer {
-    const duration<double> _lat;
     std::list<request> _executing;
     duration<double> _next;
     unsigned long _processed;
     collector& _st;
+    const duration<double> _lat;
+    std::unique_ptr<process> _pause;
 
 public:
-    consumer(unsigned rps, collector& st)
-            : _lat(1.0 / rps)
-            , _processed(0)
+    consumer(unsigned rps, collector& st, std::string proc)
+            : _processed(0)
             , _st(st)
+            , _lat(1.0 / rps)
+            , _pause(make_process(proc, _lat))
     {
     }
 
@@ -174,13 +176,13 @@ public:
             _st.collect(now - _executing.front().start);
             _executing.pop_front();
             _processed++;
-            _next += _lat;
+            _next += _pause->get();
         }
     }
 
     void execute(duration<double> now, request rq) {
         if (_executing.empty()) {
-            _next = now + _lat;
+            _next = now + _pause->get();
         }
         _executing.push_back(std::move(rq));
     }
@@ -268,8 +270,8 @@ public:
 
 int main (int argc, char **argv)
 {
-    if (argc != 6) {
-        fmt::print("usage: {} <duration seconds> <producer process> <producer rate> <dispatcher process> <consumer rate>\n", argv[0]);
+    if (argc != 7) {
+        fmt::print("usage: {} <duration seconds> <producer process> <producer rate> <dispatcher process> <consumer process> <consumer rate>\n", argv[0]);
         return 1;
     }
 
@@ -277,9 +279,10 @@ int main (int argc, char **argv)
     std::string prod_proc = argv[2];
     unsigned long prod_rate = atoi(argv[3]);
     std::string disp_proc = argv[4];
-    unsigned long cons_rate = atoi(argv[5]);
+    std::string cons_proc = argv[5];
+    unsigned long cons_rate = atoi(argv[6]);
     collector st;
-    consumer cons(cons_rate, st);
+    consumer cons(cons_rate, st, cons_proc);
     dispatcher disp(microseconds(500), cons, disp_proc);
     producer prod(prod_rate, disp, prod_proc);
     duration<double> _verb(0.0);
