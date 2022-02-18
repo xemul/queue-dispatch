@@ -24,13 +24,6 @@
 #define CAP_FACTOR (GOAL_FACTOR * 2.0)
 #endif
 
-#ifndef PROCESS
-#error "Please, define the PROCESS (uniform, poisson, exp_delay, cap_delay)"
-#endif
-
-#define _PROC_CALC(proc) proc##_process
-#define PROC_CLASS(proc) _PROC_CALC(proc)
-
 using namespace std::chrono;
 using namespace boost::accumulators;
 
@@ -106,6 +99,23 @@ public:
         return _lat * _jit(_rng);
     }
 };
+
+static std::unique_ptr<process> make_process(std::string proc, duration<double> lat) {
+    if (proc == "uniform") {
+        return std::make_unique<uniform_process>(lat);
+    }
+    if (proc == "poisson") {
+        return std::make_unique<poisson_process>(lat);
+    }
+    if (proc == "expdelay") {
+        return std::make_unique<exp_delay_process>(lat);
+    }
+    if (proc == "capdelay") {
+        return std::make_unique<cap_delay_process>(lat);
+    }
+
+    throw std::runtime_error(fmt::format("unknown process {}", proc));
+}
 
 struct request {
     const duration<double> start;
@@ -190,8 +200,8 @@ class dispatcher {
     const unsigned long _limit;
 
 public:
-    dispatcher(duration<double> lat, consumer& c, std::function<std::unique_ptr<process>(duration<double>)> pgen)
-            : _pause(pgen(lat))
+    dispatcher(duration<double> lat, consumer& c, std::string proc)
+            : _pause(make_process(proc, lat))
             , _next(0.0)
             , _dispatched(0)
             , _cons(c)
@@ -230,14 +240,14 @@ public:
 };
 
 class producer {
-    const duration<double> _pause;
     dispatcher& _disp;
     duration<double> _next;
     unsigned long _generated;
+    std::unique_ptr<process> _pause;
 
 public:
-    producer(unsigned rps, dispatcher& d)
-            : _pause(1.0 / rps)
+    producer(unsigned rps, dispatcher& d, std::string proc)
+            : _pause(make_process(proc, duration<double>(1.0 / rps)))
             , _disp(d)
             , _next(0.0)
             , _generated(0)
@@ -246,7 +256,7 @@ public:
 
     void tick(duration<double> now) {
         while (now >= _next) {
-            _next += _pause;
+            _next += _pause->get();
             _disp.queue(now);
             _generated++;
         }
@@ -258,18 +268,20 @@ public:
 
 int main (int argc, char **argv)
 {
-    if (argc != 4) {
-        fmt::print("usage: {} <duration seconds> <producer rate> <consumer rate>\n", argv[0]);
+    if (argc != 6) {
+        fmt::print("usage: {} <duration seconds> <producer process> <producer rate> <dispatcher process> <consumer rate>\n", argv[0]);
         return 1;
     }
 
     unsigned long total_sec = atoi(argv[1]);
-    unsigned long prod_rate = atoi(argv[2]);
-    unsigned long cons_rate = atoi(argv[3]);
+    std::string prod_proc = argv[2];
+    unsigned long prod_rate = atoi(argv[3]);
+    std::string disp_proc = argv[4];
+    unsigned long cons_rate = atoi(argv[5]);
     collector st;
     consumer cons(cons_rate, st);
-    dispatcher disp(microseconds(500), cons, [] (auto l) { return std::make_unique<PROC_CLASS(PROCESS)>(l); });
-    producer prod(prod_rate, disp);
+    dispatcher disp(microseconds(500), cons, disp_proc);
+    producer prod(prod_rate, disp, prod_proc);
     duration<double> _verb(0.0);
     unsigned long max_queued = 0;
 

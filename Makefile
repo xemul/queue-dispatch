@@ -1,15 +1,9 @@
 SOURCE = simulate.cc
 
-all: uniform poisson expdelay
+all: sim sim-v
 
-uniform: $(SOURCE)
-	clang++ -std=c++20 -O2 -lfmt -DPROCESS=uniform $< -o $@
+sim: $(SOURCE)
+	clang++ -std=c++20 -O2 -lfmt $< -o $@
 
-poisson: $(SOURCE)
-	clang++ -std=c++20 -O2 -lfmt -DPROCESS=poisson $< -o $@
-
-expdelay: $(SOURCE)
-	clang++ -std=c++20 -O2 -lfmt -DPROCESS=exp_delay $< -o $@
-
-capdelay: $(SOURCE)
-	clang++ -std=c++20 -O2 -lfmt -DPROCESS=cap_delay $< -o $@
+sim-v: $(SOURCE)
+	clang++ -std=c++20 -O2 -lfmt -DVERB=1 $< -o $@
