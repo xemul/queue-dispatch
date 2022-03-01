@@ -16,12 +16,8 @@
 #define VERB false
 #endif
 
-#ifndef GOAL_FACTOR
-#define GOAL_FACTOR 1.5 // As in seastar
-#endif
-
 #ifndef CAP_FACTOR
-#define CAP_FACTOR (GOAL_FACTOR * 2.0)
+#define CAP_FACTOR (3.0)
 #endif
 
 using namespace std::chrono;
@@ -193,7 +189,6 @@ public:
 };
 
 class dispatcher {
-    static constexpr double lat_extend = GOAL_FACTOR;
     std::unique_ptr<process> _pause;
     duration<double> _next;
     consumer& _cons;
@@ -202,15 +197,15 @@ class dispatcher {
     const unsigned long _limit;
 
 public:
-    dispatcher(duration<double> lat, consumer& c, std::string proc)
+    dispatcher(duration<double> lat, consumer& c, std::string proc, float goal_factor)
             : _pause(make_process(proc, lat))
             , _next(0.0)
             , _dispatched(0)
             , _cons(c)
-            , _limit(lat * lat_extend / _cons.latency())
+            , _limit(lat * goal_factor / _cons.latency())
     {
 #if VERB
-        fmt::print("Consumer limit {} requests\n", _limit);
+        fmt::print("Consumer limit {} requests, goal {}ms factor {}\n", _limit, lat.count() * 1000, goal_factor);
 #endif
         if (_limit == 0) {
             throw std::runtime_error("Too low consumer rate");
@@ -270,8 +265,8 @@ public:
 
 int main (int argc, char **argv)
 {
-    if (argc != 7) {
-        fmt::print("usage: {} <duration seconds> <producer process> <producer rate> <dispatcher process> <consumer process> <consumer rate>\n", argv[0]);
+    if (argc < 7) {
+        fmt::print("usage: {} <duration seconds> <producer process> <producer rate> <dispatcher process> <consumer process> <consumer rate> [<latency_goal>] [<goal_factor>]\n", argv[0]);
         return 1;
     }
 
@@ -281,9 +276,19 @@ int main (int argc, char **argv)
     std::string disp_proc = argv[4];
     std::string cons_proc = argv[5];
     unsigned long cons_rate = atoi(argv[6]);
+
+    unsigned latency_goal = 500; // as in seastar
+    if (argc > 7 && argv[7][0] != '-') {
+        latency_goal = atoi(argv[7]);
+    }
+    float goal_factor = 1.5; // as in seastar
+    if (argc > 8 && argv[8][0] != '-') {
+        goal_factor = atof(argv[8]);
+    }
+
     collector st;
     consumer cons(cons_rate, st, cons_proc);
-    dispatcher disp(microseconds(500), cons, disp_proc);
+    dispatcher disp(microseconds(latency_goal), cons, disp_proc, goal_factor);
     producer prod(prod_rate, disp, prod_proc);
     duration<double> _verb(0.0);
     unsigned long max_queued = 0;
