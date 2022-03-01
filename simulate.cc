@@ -115,22 +115,26 @@ static std::unique_ptr<process> make_process(std::string proc, duration<double> 
 
 struct request {
     const duration<double> start;
-    request(duration<double> now) : start(now) { }
+    duration<double> dispatch;
+    request(duration<double> now) : start(now), dispatch(0) { }
 };
 
 class collector {
     static constexpr std::array<double, 3> quantiles = { 0.5, 0.95, 0.99 };
     using accumulator_type = accumulator_set<double, stats<tag::extended_p_square_quantile(quadratic), tag::mean, tag::max>>;
     accumulator_type _latencies;
+    accumulator_type _x_latencies;
 
 public:
     collector()
             : _latencies(extended_p_square_probabilities = quantiles)
+            , _x_latencies(extended_p_square_probabilities = quantiles)
     {
     }
 
-    void collect(duration<double> lat) {
+    void collect(duration<double> lat, duration<double> xlat) {
         _latencies(lat.count());
+        _x_latencies(xlat.count());
     }
 
     duration<double> max_lat() const noexcept {
@@ -147,6 +151,22 @@ public:
 
     duration<double> p99_lat() const noexcept {
         return duration<double>(quantile(_latencies, quantile_probability = 0.99));
+    }
+
+    duration<double> max_xlat() const noexcept {
+        return duration<double>(max(_x_latencies));
+    }
+
+    duration<double> mean_xlat() const noexcept {
+        return duration<double>(mean(_x_latencies));
+    }
+
+    duration<double> p95_xlat() const noexcept {
+        return duration<double>(quantile(_x_latencies, quantile_probability = 0.95));
+    }
+
+    duration<double> p99_xlat() const noexcept {
+        return duration<double>(quantile(_x_latencies, quantile_probability = 0.99));
     }
 };
 
@@ -169,7 +189,7 @@ public:
 
     void tick(duration<double> now) {
         while (!_executing.empty() > 0 && now >= _next) {
-            _st.collect(now - _executing.front().start);
+            _st.collect(now - _executing.front().start, now - _executing.front().dispatch);
             _executing.pop_front();
             _processed++;
             _next += _pause->get();
@@ -180,6 +200,7 @@ public:
         if (_executing.empty()) {
             _next = now + _pause->get();
         }
+        rq.dispatch = now;
         _executing.push_back(std::move(rq));
     }
 
@@ -315,6 +336,8 @@ int main (int argc, char **argv)
         now += microseconds(1);
     }
 
-    fmt::print("{} {}  mean {}  p95 {}  p99 {}  max {}  max_queued {}\n", prod_rate, cons_rate, st.mean_lat().count(), st.p95_lat().count(), st.p99_lat().count(), st.max_lat().count(), max_queued);
+    fmt::print("producer rate: {} consumer rate: {} maximum queued: {}\n", prod_rate, cons_rate, max_queued);
+    fmt::print("total latencies: mean {:.6f}  p95 {:.6f}  p99 {:.6f}  max {:.6f}\n", st.mean_lat().count(), st.p95_lat().count(), st.p99_lat().count(), st.max_lat().count());
+    fmt::print("exec latencies:  mean {:.6f}  p95 {:.6f}  p99 {:.6f}  max {:.6f}\n", st.mean_xlat().count(), st.p95_xlat().count(), st.p99_xlat().count(), st.max_xlat().count());
     return 0;
 }
