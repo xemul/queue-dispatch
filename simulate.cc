@@ -313,6 +313,7 @@ int main (int argc, char **argv)
     producer prod(prod_rate, disp, prod_proc);
     duration<double> _verb(0.0);
     unsigned long max_queued = 0;
+    unsigned long max_executed = 0;
 
     duration<double> now(0.0);
     while (now <= seconds(total_sec)) {
@@ -321,6 +322,7 @@ int main (int argc, char **argv)
         disp.tick(now);
 
         max_queued = std::max(max_queued, disp.queued());
+        max_executed = std::max(max_executed, cons.executing());
         if (now >= _verb) {
 #if VERB
             fmt::print("{:5}   {:10}/{:<10}   g {:<10.0f} d {:<10.0f} c {:<10.0f}\n", now,
@@ -336,7 +338,7 @@ int main (int argc, char **argv)
         now += microseconds(1);
     }
 
-    fmt::print("producer rate: {} consumer rate: {} maximum queued: {}\n", prod_rate, cons_rate, max_queued);
+    fmt::print("producer rate: {} consumer rate: {} maximum queued: {} executing: {}\n", prod_rate, cons_rate, max_queued, max_executed);
     fmt::print("total latencies: mean {:.6f}  p95 {:.6f}  p99 {:.6f}  max {:.6f}\n", st.mean_lat().count(), st.p95_lat().count(), st.p99_lat().count(), st.max_lat().count());
     fmt::print("exec latencies:  mean {:.6f}  p95 {:.6f}  p99 {:.6f}  max {:.6f}\n", st.mean_xlat().count(), st.p95_xlat().count(), st.p99_xlat().count(), st.max_xlat().count());
     return 0;
