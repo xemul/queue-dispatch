@@ -33,6 +33,7 @@ public:
 
 class disk {
     const unsigned _id;
+    const uint64_t _page_size = 4 << 20;
 
     struct queue {
         const unsigned _id;
@@ -63,7 +64,6 @@ class disk {
     };
 
     std::vector<queue> _qs;
-    unsigned _active = 0;
     uint64_t _requests_processed = 0;
 
 public:
@@ -82,10 +82,9 @@ public:
         assert(assigned_rps == rps);
     }
 
-    void make_request(request& rq, duration<double> now) {
-        unsigned tq = _active % _qs.size();
-        _active++;
-        _qs[tq].add(rq, now, _id);
+    void make_request(request& rq, duration<double> now, unsigned cpu) {
+        unsigned q = cpu % _qs.size();
+        _qs[q].add(rq, now, _id);
     }
 
     void tick(duration<double> now) {
@@ -111,9 +110,9 @@ public:
         }
     }
 
-    void make_request(request& rq, duration<double> now) {
+    void make_request(request& rq, duration<double> now, unsigned cpu) {
         unsigned disk = (rq.offset() / _chunk_size) % _disks.size();
-        _disks[disk].make_request(rq, now);
+        _disks[disk].make_request(rq, now, cpu);
     }
 
     void tick(duration<double> now) {
@@ -143,8 +142,8 @@ public:
     {
     }
 
-    void io(request& rq, duration<double> now) {
-        _raid.make_request(rq, now);
+    void io(request& rq, duration<double> now, unsigned cpu) {
+        _raid.make_request(rq, now, cpu);
     }
 
     extent allocate() {
@@ -161,6 +160,7 @@ public:
 };
 
 class cpu {
+    const unsigned _id;
     filesystem& _fs;
     std::vector<std::optional<request>> _requests;
     const uint64_t _request_size;
@@ -169,8 +169,9 @@ class cpu {
     duration<double> _total_exec_lat = duration<double>(0.0);
 
 public:
-    cpu(unsigned parallelism, uint64_t rs, filesystem& fs)
-            : _fs(fs)
+    cpu(unsigned id, unsigned parallelism, uint64_t rs, filesystem& fs)
+            : _id(id)
+            , _fs(fs)
             , _request_size(rs)
     {
         _requests.resize(parallelism);
@@ -188,7 +189,7 @@ public:
         for (auto& rq : _requests) {
             if (!rq.has_value()) {
                 rq.emplace(now, _cur.offset);
-                _fs.io(*rq, now);
+                _fs.io(*rq, now, _id);
                 _cur.offset += _request_size;
                 _cur.size -= _request_size;
                 if (_cur.size < _request_size) {
@@ -230,7 +231,7 @@ int main (int argc, char **argv)
     std::vector<cpu> cpus;
     cpus.reserve(cpu_nr);
     for (unsigned i = 0; i < cpu_nr; i++) {
-        cpus.emplace_back(cpu_parallelism, cpu_req_size, fs);
+        cpus.emplace_back(i, cpu_parallelism, cpu_req_size, fs);
     }
 
     duration<double> now(0.0);
