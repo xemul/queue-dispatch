@@ -4,6 +4,7 @@
 #include <deque>
 #include <vector>
 #include <ranges>
+#include <random>
 #include <cassert>
 
 #ifndef VERB
@@ -86,9 +87,10 @@ public:
         }
     }
 
-    void make_request(request* rq, duration<double> now) {
+    std::string make_request(request* rq, duration<double> now) {
         unsigned disk = (rq->offset() / _chunk_size) % _disks.size();
         _disks[disk].make_request(rq, now);
+        return fmt::format(" {}:{}", rq->cpu(), disk);
     }
 
     void tick(duration<double> now) {
@@ -111,11 +113,14 @@ class filesystem {
     uint64_t _offset = 0;
     unsigned _total_extents = 0;
     std::vector<request*> _queue;
+    std::random_device rd;
+    std::mt19937 generator;
 
 public:
     filesystem(uint64_t xs, raid& r)
             : _raid(r)
             , _extent_size(xs)
+            , generator(rd())
     {
     }
 
@@ -124,9 +129,16 @@ public:
     }
 
     void tick(duration<double> now) {
-        for (auto& rq : _queue) {
-            _raid.make_request(rq, now);
+        if (_queue.size() < 32) {
+            return;
         }
+
+        std::string disp = "";
+        std::shuffle(_queue.begin(), _queue.end(), generator);
+        for (auto rq : _queue) {
+            disp += _raid.make_request(rq, now);
+        }
+        fmt::print("{}\n", disp);
         _queue.clear();
     }
 
