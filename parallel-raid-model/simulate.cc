@@ -15,11 +15,16 @@ using namespace std::chrono;
 struct request {
     bool _completed = false;
     const uint64_t _offset;
+    const unsigned _cpu_id;
     duration<double> _start;
     duration<double> _stop;
 
 public:
-    request(duration<double> now, uint64_t off) noexcept : _start(now), _offset(off) {}
+    request(duration<double> now, uint64_t off, unsigned cpu) noexcept
+            : _offset(off)
+            , _cpu_id(cpu)
+            , _start(now)
+    {}
 
     void complete(duration<double> now) {
         _completed = true;
@@ -28,68 +33,39 @@ public:
 
     bool completed() const noexcept { return _completed; }
     uint64_t offset() const noexcept { return _offset; }
+    unsigned cpu() const noexcept { return _cpu_id; }
+
     duration<double> latency() const noexcept { return _stop - _start; }
 };
 
 class disk {
     const unsigned _id;
-    const uint64_t _page_size = 4 << 20;
-
-    struct queue {
-        const unsigned _id;
-        std::deque<request*> q;
-        const duration<double> lat;
-        duration<double> next;
-
-        queue(uint64_t rps, unsigned id) noexcept : _id(id), lat(1.0/rps) {}
-
-        unsigned tick(duration<double> now, unsigned disk_id) {
-            unsigned processed = 0;
-            while (!q.empty() && now >= next) {
-                request* r = q.front();
-                q.pop_front();
-                r->complete(now);
-                processed++;
-                next += lat;
-            }
-            return processed;
-        }
-
-        void add(request& rq, duration<double> now, unsigned disk_id) {
-            if (q.empty()) {
-                next = now + lat;
-            }
-            q.push_back(&rq);
-        }
-    };
-
-    std::vector<queue> _qs;
+    std::deque<request*> _queue;
+    const duration<double> _lat;
+    duration<double> _next;
     uint64_t _requests_processed = 0;
 
 public:
-    disk(uint64_t rps, unsigned n_queues, unsigned id)
+    disk(uint64_t rps, unsigned id)
             : _id(id)
+            , _lat(1.0 / rps)
     {
-        _qs.reserve(n_queues);
-        unsigned per_queue_rps = rps / n_queues;
-        unsigned extra_rps = rps - per_queue_rps * n_queues;
-        unsigned assigned_rps = 0;
-        for (unsigned i = 0; i < n_queues; i++) {
-            unsigned rps = per_queue_rps + (i < extra_rps ? 1 : 0);
-            assigned_rps += rps;
-            _qs.emplace_back(rps, i);
-        }
-        assert(assigned_rps == rps);
     }
 
-    void make_request(request& rq, duration<double> now, unsigned cpu) {
-        unsigned q = cpu % _qs.size();
-        _qs[q].add(rq, now, _id);
+    void make_request(request* rq, duration<double> now) {
+        if (_queue.empty()) {
+            _next = now + _lat;
+        }
+        _queue.push_back(rq);
     }
 
     void tick(duration<double> now) {
-        for (auto& q : _qs) {
-            _requests_processed += q.tick(now, _id);
+        while (!_queue.empty() && now >= _next) {
+            request* r = _queue.front();
+            _queue.pop_front();
+            r->complete(now);
+            _requests_processed++;
+            _next += _lat;
         }
     }
 
@@ -101,18 +77,18 @@ class raid {
     const uint64_t _chunk_size;
 
 public:
-    raid(unsigned nr_disks, uint64_t cs, uint64_t rps, unsigned prl)
+    raid(unsigned nr_disks, uint64_t cs, uint64_t rps)
             : _chunk_size(cs)
     {
         _disks.reserve(nr_disks);
         for (unsigned i = 0; i < nr_disks; i++) {
-            _disks.emplace_back(rps, prl, i);
+            _disks.emplace_back(rps, i);
         }
     }
 
-    void make_request(request& rq, duration<double> now, unsigned cpu) {
-        unsigned disk = (rq.offset() / _chunk_size) % _disks.size();
-        _disks[disk].make_request(rq, now, cpu);
+    void make_request(request* rq, duration<double> now) {
+        unsigned disk = (rq->offset() / _chunk_size) % _disks.size();
+        _disks[disk].make_request(rq, now);
     }
 
     void tick(duration<double> now) {
@@ -134,16 +110,24 @@ class filesystem {
     const uint64_t _extent_size;
     uint64_t _offset = 0;
     unsigned _total_extents = 0;
+    std::vector<request*> _queue;
 
 public:
     filesystem(uint64_t xs, raid& r)
-        : _raid(r)
-        , _extent_size(xs)
+            : _raid(r)
+            , _extent_size(xs)
     {
     }
 
-    void io(request& rq, duration<double> now, unsigned cpu) {
-        _raid.make_request(rq, now, cpu);
+    void io(request* rq, duration<double> now) {
+        _queue.push_back(rq);
+    }
+
+    void tick(duration<double> now) {
+        for (auto& rq : _queue) {
+            _raid.make_request(rq, now);
+        }
+        _queue.clear();
     }
 
     extent allocate() {
@@ -188,8 +172,8 @@ public:
         }
         for (auto& rq : _requests) {
             if (!rq.has_value()) {
-                rq.emplace(now, _cur.offset);
-                _fs.io(*rq, now, _id);
+                rq.emplace(now, _cur.offset, _id);
+                _fs.io(&*rq, now);
                 _cur.offset += _request_size;
                 _cur.size -= _request_size;
                 if (_cur.size < _request_size) {
@@ -205,8 +189,8 @@ public:
 
 int main (int argc, char **argv)
 {
-    if (argc < 10) {
-        fmt::print("usage: {} <duration seconds> <raid nr_disks> <raid chunk_size> <disk rps> <disk queues> <fs extent_size> <cpu nr> <cpu parallelism> <cpu request_size>\n", argv[0]);
+    if (argc < 9) {
+        fmt::print("usage: {} <duration seconds> <raid nr_disks> <raid chunk_size> <disk rps> <fs extent_size> <cpu nr> <cpu parallelism> <cpu request_size>\n", argv[0]);
         return 1;
     }
 
@@ -215,18 +199,17 @@ int main (int argc, char **argv)
     unsigned long nr_disks = atoi(argv[2]);
     unsigned long chunk_size = atoi(argv[3]);
     unsigned long disk_rps = atoi(argv[4]);
-    unsigned long disk_queues = atoi(argv[5]);
     fmt::print("RAID: {} disks, {} chunk_size\n", nr_disks, chunk_size);
-    fmt::print("DISK: {} rps, {} queues\n", disk_rps, disk_queues);
-    raid r(nr_disks, chunk_size, disk_rps, disk_queues);
+    fmt::print("DISK: {} rps\n", disk_rps);
+    raid r(nr_disks, chunk_size, disk_rps);
 
-    unsigned long extent_size = atoi(argv[6]);
+    unsigned long extent_size = atoi(argv[5]);
     fmt::print("FS: {} extent\n", extent_size);
     filesystem fs(extent_size, r);
 
-    unsigned long cpu_nr = atoi(argv[7]);
-    unsigned long cpu_parallelism = atoi(argv[8]);
-    unsigned long cpu_req_size = atoi(argv[9]);
+    unsigned long cpu_nr = atoi(argv[6]);
+    unsigned long cpu_parallelism = atoi(argv[7]);
+    unsigned long cpu_req_size = atoi(argv[8]);
     fmt::print("CPU: {}, {} parallelism, {} req_size\n", cpu_nr, cpu_parallelism, cpu_req_size);
     std::vector<cpu> cpus;
     cpus.reserve(cpu_nr);
@@ -239,6 +222,7 @@ int main (int argc, char **argv)
         for (auto& c : cpus) {
             c.tick(now);
         }
+        fs.tick(now);
         r.tick(now);
         now += microseconds(1);
     }
